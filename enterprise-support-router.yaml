@@ -1,0 +1,314 @@
+# vLLM Semantic Router - Enterprise Customer Support System
+# Enterprise Customer Service Intelligent Routing System
+
+version: v0.1
+
+# Disable unnecessary components to save resources
+classifiers:
+  intent_classifier: none
+  pii_detector: none
+  jailbreak_detector: none
+  factcheck_classifier: none
+
+# Network listening configuration
+listeners:
+  - name: "enterprise-support"
+    address: "0.0.0.0"
+    port: 8888
+    timeout: "300s"
+
+# Signal configuration - Enterprise customer service specific
+signals:
+  # Keyword signals - Fast classification
+  keywords:
+    # 1. Urgent issue keywords
+    - name: "urgent_keywords"
+      operator: "OR"
+      keywords:
+        - "urgent"
+        - "emergency"
+        - "ASAP"
+        - "critical"
+        - "immediate"
+      case_sensitive: false
+      description: "Urgent issue keyword detection"
+
+    # 2. Billing payment issue keywords
+    - name: "billing_keywords"
+      operator: "OR"
+      keywords:
+        - "bill"
+        - "payment"
+        - "invoice"
+        - "charge"
+        - "refund"
+        - "cost"
+        - "price"
+      case_sensitive: false
+      description: "Billing payment issue keyword detection"
+
+    # 3. Technical fault keywords
+    - name: "technical_keywords"
+      operator: "OR"
+      keywords:
+        - "error"
+        - "crash"
+        - "bug"
+        - "broken"
+        - "not working"
+        - "failure"
+        - "issue"
+      case_sensitive: false
+      description: "Technical fault keyword detection"
+
+    # 4. Spam/advertisement content keywords
+    - name: "spam_keywords"
+      operator: "OR"
+      keywords:
+        - "buy now"
+        - "discount"
+        - "limited offer"
+        - "click here"
+        - "make money"
+        - "free gift"
+      case_sensitive: false
+      description: "Spam advertisement content detection"
+
+  # Preference signals - Intelligent analysis of complex intents
+  preferences:
+    - name: "strategic_feedback"
+      description: "Analyze whether it is strategic feedback or product suggestion"
+      llm_endpoint: "http://host.docker.internal:11434"
+      model: "llama3.2:3b"
+      timeout: 5000
+      cache_enabled: true
+      cache_ttl: 3600
+      # Chinese system prompt, guiding LLM analysis
+      system_prompt: |
+        Analyze whether the user query is strategic feedback or product suggestion.
+        If it is of the following types, answer "strategic":
+        - Product improvement suggestions
+        - User experience optimization
+        - Strategic direction consultation
+        - Market feedback
+        - Long-term planning suggestions
+        
+        Otherwise answer "not_strategic".
+        Only answer "strategic" or "not_strategic".
+
+  # Other auxiliary signals
+  domains:
+    - name: "customer_support"
+      description: "Customer service related queries"
+    - name: "technical_support"
+      description: "Technical support related queries"
+    - name: "other"
+      description: "Other types of queries"
+
+  # Context length signals
+  context:
+    - name: "short_query"
+      min_tokens: "0"
+      max_tokens: "500"
+      description: "Short query"
+    - name: "long_query"
+      min_tokens: "500"
+      max_tokens: "4000"
+      description: "Long query requiring detailed processing"
+
+# Routing decision configuration - Enterprise customer service workflow
+decisions:
+  # 1. Highest priority: Urgent issue route (immediate response)
+  - name: "urgent_support_route"
+    description: "Urgent issue immediate response route"
+    priority: 300  # Highest priority
+    rules:
+      operator: "AND"
+      conditions:
+        - type: "keyword"
+          name: "urgent_keywords"
+    modelRefs:
+      - model: "tinyllama:latest"
+        use_reasoning: false  # Quick response, no complex reasoning
+    plugins:
+      - type: "system_prompt"
+        configuration:
+          system_prompt: |
+            You are an emergency customer service specialist. The user has encountered an urgent problem!
+            Please respond immediately, reassure the user, and provide quick solutions.
+            Stay calm, professional, and efficient.
+            First priority: Confirm the problem and reassure the user.
+            Second priority: Provide immediately actionable solutions.
+            Third priority: Inform follow-up steps.
+
+  # 2. Billing payment issue route (Financial model)
+  - name: "billing_support_route"
+    description: "Billing payment issue financial expert route"
+    priority: 250
+    rules:
+      operator: "AND"
+      conditions:
+        - type: "keyword"
+          name: "billing_keywords"
+        # Only use advanced model when query is long and needs detailed explanation
+        - type: "context"
+          name: "long_query"
+    modelRefs:
+      - model: "llama3.2:3b"  # Use stronger model for financial issues
+        use_reasoning: true
+        reasoning_effort: "medium"
+    plugins:
+      - type: "system_prompt"
+        configuration:
+          system_prompt: |
+            You are a financial customer service expert. Handle billing, payment, invoice related issues.
+            Please:
+            1. Carefully verify the billing information provided by the user
+            2. Explain cost structure and calculation methods
+            3. Provide clear payment guidance or problem solutions
+            4. Ensure accuracy and security of financial information
+            5. If needed, explain refund or adjustment procedures
+
+  # 3. Technical fault route (Debugging expert model)
+  - name: "technical_support_route"
+    description: "Technical fault debugging expert route"
+    priority: 200
+    rules:
+      operator: "AND"
+      conditions:
+        - type: "keyword"
+          name: "technical_keywords"
+        - type: "domain"
+          name: "technical_support"
+    modelRefs:
+      - model: "llama3.2:3b"
+        use_reasoning: true
+        reasoning_effort: "high"  # Technical issues need in-depth reasoning
+    plugins:
+      - type: "system_prompt"
+        configuration:
+          system_prompt: |
+            You are a technical support engineer. Handle technical faults and error reports.
+            Please follow these steps:
+            1. Ask detailed questions about error symptoms and reproduction steps
+            2. Analyze possible root causes
+            3. Provide step-by-step troubleshooting guide
+            4. Suggest temporary solutions (if applicable)
+            5. Provide permanent fix solutions or upgrade suggestions
+            6. Record problems for subsequent product improvement
+
+  # 4. Strategic feedback route (Needs intelligent analysis)
+  - name: "strategic_feedback_route"
+    description: "Strategic feedback and product suggestion analysis route"
+    priority: 150
+    rules:
+      operator: "AND"
+      conditions:
+        - type: "preference"
+          name: "strategic_feedback"
+          min_confidence: 0.7  # Confidence threshold 70%
+        # Strategic feedback usually requires detailed analysis
+        - type: "context"
+          name: "long_query"
+    modelRefs:
+      - model: "llama3.2:3b"
+        use_reasoning: true
+        reasoning_effort: "high"  # Strategic analysis requires deep thinking
+    plugins:
+      - type: "system_prompt"
+        configuration:
+          system_prompt: |
+            You are a product strategic analyst. Handle user feedback and product suggestions.
+            Please:
+            1. Deeply understand user suggestions and feedback
+            2. Analyze feasibility and potential impact of suggestions
+            3. Evaluate from multiple perspectives: user experience, technical implementation, business value
+            4. Provide professional improvement suggestions and implementation plans
+            5. Thank users for valuable feedback and explain how it will be adopted
+            6. If needed, invite users to participate in further discussions
+
+  # 5. Spam advertisement content interception route
+  - name: "spam_intercept_route"
+    description: "Spam advertisement content interception route"
+    priority: 100
+    rules:
+      operator: "AND"
+      conditions:
+        - type: "keyword"
+          name: "spam_keywords"
+    modelRefs:
+      - model: "tinyllama:latest"
+        use_reasoning: false
+    plugins:
+      - type: "system_prompt"
+        configuration:
+          system_prompt: |
+            Possible spam or advertisement content detected.
+            Please politely but firmly inform the user:
+            1. This system is only for customer service consultation
+            2. Advertisement or promotional content is not within the service scope
+            3. If there are other questions, welcome to continue consultation
+            4. Maintain professional and polite attitude
+
+  # 6. Default route - General customer service consultation
+  - name: "general_support_route"
+    description: "General customer service consultation default route"
+    priority: 50  # Lowest priority
+    rules:
+      operator: "AND"
+      conditions: []  # Empty condition, matches all other queries
+    modelRefs:
+      - model: "tinyllama:latest"
+        use_reasoning: false
+    plugins:
+      - type: "system_prompt"
+        configuration:
+          system_prompt: |
+            You are a professional customer service representative. Provide friendly, professional help to users.
+            Please:
+            1. Greet users warmly
+            2. Listen carefully to user needs
+            3. Provide accurate, useful information
+            4. If unsure, honestly inform and promise follow-up
+            5. Thank users at the end and invite further consultation
+
+# Backend model configuration
+providers:
+  # Available model configuration
+  models:
+    - name: "tinyllama:latest"
+      reasoning_family: "tinyllama"
+      param_size: "1.1b"
+      endpoints:
+        - name: "ollama_endpoint"
+          weight: 1
+          endpoint: "host.docker.internal:11434"
+          protocol: "http"
+      access_key: "not-required"
+      description: "Fast response model, suitable for simple consultation"
+
+    - name: "llama3.2:3b"
+      reasoning_family: "llama3"
+      param_size: "3b"
+      endpoints:
+        - name: "ollama_endpoint"
+          weight: 1
+          endpoint: "host.docker.internal:11434"
+          protocol: "http"
+      access_key: "not-required"
+      description: "Deep analysis model, suitable for complex problems"
+
+  # Default model
+  default_model: "tinyllama:latest"
+
+  # Reasoning family configuration
+  reasoning_families:
+    tinyllama:
+      type: "reasoning_effort"
+      parameter: "reasoning_effort"
+    llama3:
+      type: "reasoning_effort"
+      parameter: "reasoning_effort"
+
+  # Default reasoning effort level
+  default_reasoning_effort: "low"
